@@ -8,7 +8,7 @@
 /*
   MAC engine 4x4
  */
-module attention_top (
+module tt_um_attention_top (
     input  wire [7:0] qv_slv_in,    // Dedicated inputs
     input  wire       vld_slv_in,
     output wire       rdy_slv_out,
