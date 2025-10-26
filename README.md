@@ -40,3 +40,67 @@ The GitHub action will automatically build the ASIC files using [LibreLane](http
   - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
   - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
   - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)
+
+# Transformer Attention Engine – TinyML ASIC Project
+
+## Project Proposal
+
+Goal: design, train, and implement the **core attention mechanism** of a Transformer model as a TinyTapeout ASIC.
+
+We will:
+1. Design a fixed-point, single-head Transformer Attention Engine in Verilog.
+2. Train a small Transformer model in software for a simple sequence or classification task.
+3. Extract the learned matrices (`W_Q`, `W_K`, `W_V`) from training.
+4. Implement the learned weights directly in hardware using standard cells.
+5. If the design exceeds area limits, reduce precision or dimensions. If still too large, explore custom cells.
+
+---
+
+## What the Transformer Does
+
+A Transformer processes sequences using **self-attention** instead of recurrence or convolution.  
+For input tokens \(X = [x_1, x_2, ..., x_n]\):
+
+\[
+Q = XW_Q,\quad K = XW_K,\quad V = XW_V
+\]
+\[
+\text{Attention}(Q,K,V) = \text{softmax}\!\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+\]
+
+Each token attends to all others through this computation.
+
+---
+
+## Hardware Implementation
+
+- Function: \(O = \text{softmax}(QK^T)V\)
+- Precision: 8-bit fixed point
+- Dimensions: \(d_k = 4, d_v = 1, n = 4\)
+- Architecture: serialized, single 8×8→16-bit MAC
+- Softmax: LUT-based exponential and reciprocal
+- Technology: Sky130 open PDK (TinyTapeout)
+- Target: ≤ 1k gates, 10–20 MHz
+
+---
+
+## Implementation Plan (Condensed)
+
+1. **Interface**  
+   Define ports: `clk, rst_n, in_data[7:0], in_valid, in_ready, out_data[7:0], out_valid, out_ready`.
+
+2. **Golden Reference**  
+   Python fixed-point model, LUT generation (`exp_lut.mem`, `recip_lut.mem`), test vectors.
+
+3. **RTL Core**  
+   Modules: `mac8x8.sv`, `lut_exp.sv`, `lut_recip.sv`, `fifo2.sv`, `attn_fsm.sv`.  
+   FSM stages: SCORE → SOFTMAX → NORM → WEIGHTED_SUM → OUT.
+
+4. **Simulation**  
+   Unit testbenches, full verification vs. Python golden (±1 LSB).
+
+5. **Synthesis**  
+   Run `yosys`, reduce LUTs if over area, verify timing.
+
+6. **Integration**  
+   TinyTapeout repo structure:  
