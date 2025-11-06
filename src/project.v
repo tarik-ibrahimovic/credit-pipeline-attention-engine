@@ -17,7 +17,8 @@ module tt_um_attention_top (
     input  wire       clk,      
     input  wire       rst_n     
 );
-    
+  // uio [0,1] used as slave vld/rdy
+  // uio [2,3] used as master vld/rdy
     wire [7:0] qv_slv_in   = ui_in;
     
     wire [7:0] score_mst_out_w;
@@ -32,6 +33,7 @@ module tt_um_attention_top (
     assign uio_out[2] = vld_mst_out_w;
     
     wire rdy_mst_in = uio_in[3];
+
 
     assign uio_oe [0] = 1'b0; 
     assign uio_oe [1] = 1'b1; 
@@ -63,7 +65,6 @@ module tt_um_attention_top (
     reg signed [16:0]  mac_reg;
 
     assign rdy_slv_out_w = (input_reg_state == FIRST | input_reg_state == READY);
-    
     assign score_mst_out_w = mac_reg[7:0]; 
 
 
@@ -98,8 +99,6 @@ module tt_um_attention_top (
     //---------
     // Softmax
     //---------
-
-
 
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 
