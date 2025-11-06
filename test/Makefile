@@ -2,11 +2,16 @@
 # See https://docs.cocotb.org/en/stable/quickstart.html for more info
 
 # defaults
-SIM ?= icarus
+SIM ?= verilator
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
 PROJECT_SOURCES = project.v
 
+# Verilator 5+: pick a timing mode (choose one)
+VERILATOR_COMPILE_ARGS += --timing     # simplest for functional sims
+
+# Silence missing-pin noise from std-cell/tap instantiations
+VERILATOR_COMPILE_ARGS += -Wno-PINMISSING
 ifneq ($(GATES),yes)
 
 # RTL simulation:
@@ -32,6 +37,9 @@ endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
+# Verilator 5+: enable simple timing
+COMPILE_ARGS += --timing
+COMPILE_ARGS += -Wno-fatal
 
 # Include the testbench sources:
 VERILOG_SOURCES += $(PWD)/tb.v

@@ -47,6 +47,9 @@ module tt_um_attention_top (
     
     assign vld_mst_out_w = 1'b0; 
     
+    //-------------------------------------
+    // MAC one row one column of 4 features
+    //-------------------------------------
     typedef enum reg [1:0] {
       FIRST  =  2'b00,
       WAIT4SECOND =  2'b01,
@@ -54,10 +57,10 @@ module tt_um_attention_top (
     } input_reg_state_t;
     
     input_reg_state_t input_reg_state; 
-    reg  [7:0] input_reg; 
+    reg signed  [7:0] input_reg; 
     
-    wire [15:0] qv_mult = input_reg * qv_slv_in;
-    reg [17:0]  mac_reg;
+    wire signed [16:0] qv_mult = input_reg * $signed(qv_slv_in);
+    reg signed [16:0]  mac_reg;
 
     assign rdy_slv_out_w = (input_reg_state == FIRST | input_reg_state == READY);
     
@@ -67,7 +70,7 @@ module tt_um_attention_top (
     always @(posedge clk) begin 
       if (rst_n == 1'b0) begin
         input_reg_state <= FIRST;
-        mac_reg         <= 18'd0;
+        mac_reg         <= 17'd0;
         input_reg       <= 8'd0; 
       end
       else begin
@@ -84,11 +87,19 @@ module tt_um_attention_top (
             end
           end
           READY: begin
-            mac_reg <= (mac_reg + 18'(qv_mult));
+            mac_reg <= 17'(mac_reg + 17'(qv_mult));
+          end
+          default: begin
           end
         endcase
       end
     end
+
+    //---------
+    // Softmax
+    //---------
+
+
 
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 
