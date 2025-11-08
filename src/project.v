@@ -99,11 +99,11 @@ module tt_um_attention_top (
     //----
     // e^x
     //----
-    wire signed ex_output[7:0];
+    wire signed [7:0] ex_output;
     wire signed [16:0] mac_div2 = {mac_reg[16], mac_reg[16:1]}; // Q3.13
     ex u_ex (
-      .mac_output(mac_div2);
-      .ex_result(ex_output);
+      .mac_output(mac_div2),
+      .ex_result(ex_output)
     );
 
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
