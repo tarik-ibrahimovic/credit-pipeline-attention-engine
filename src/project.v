@@ -65,7 +65,7 @@ module tt_um_attention_top (
     reg signed [16:0]  mac_reg;
 
     assign rdy_slv_out_w = (input_reg_state == FIRST | input_reg_state == READY);
-    assign score_mst_out_w = mac_reg[7:0]; 
+    assign score_mst_out_w = mac_div2[7:0]; 
 
 
     always @(posedge clk) begin 
@@ -96,9 +96,15 @@ module tt_um_attention_top (
       end
     end
 
-    //---------
-    // Softmax
-    //---------
+    //----
+    // e^x
+    //----
+    wire signed ex_output[7:0];
+    wire signed [16:0] mac_div2 = {mac_reg[16], mac_reg[16:1]}; // Q3.13
+    ex u_ex (
+      .mac_output(mac_div2);
+      .ex_result(ex_output);
+    );
 
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 

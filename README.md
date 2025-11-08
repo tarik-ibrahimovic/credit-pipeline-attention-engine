@@ -104,3 +104,164 @@ Each token attends to all others through this computation.
 
 6. **Integration**  
    TinyTapeout repo structure:  
+
+
+# How to do it
+Range-reduction + **polynomials** + a **Newton reciprocal**. Below is a compact, hardware-friendly design for **dmodel=4**, ≤4 tokens, **int8 Q/K (−128…127)**, computing one row at a time.
+
+---
+
+# Numeric setup (no max-sub, no LUTs)
+
+* **Q, K:** int8 symmetric, interpret as /64 → (s_q = s_k = 2^{-6}).
+* **Score (per logit):** (\sum_{t=0}^{3} q_t k_t). Worst case (4·127·127=64{,}516).
+  Use **≥20-bit signed** accumulator.
+* **Scaled dot:** divide by (\sqrt{d_k}=2) → arithmetic `>>>1`.
+* **Logit fixed-point:** treat result as **Q4.13** and **clamp** to ([-8, +8]):
+
+  * `X_MIN = -8 << 13`, `X_MAX = +8 << 13`.
+
+This bounds the exp input and gives you 13 fractional bits (fine precision).
+
+---
+
+# Softmax row pipeline (no LUTs)
+
+## 1) Scores → logits (Q4.13)
+
+```verilog
+acc[j] = Σ q[i,t]*k[j,t];           // 20b signed
+x[j]   = clamp( acc[j] >>> 1, X_MIN, X_MAX );   // Q4.13
+```
+
+## 2) e^x with **range-reduction + polynomial** (no table)
+
+We use (x = n\ln2 + r) with **n integer** and **r in ([-\tfrac{\ln2}{2}, +\tfrac{\ln2}{2}])**, so
+[
+e^{x} = 2^{n},e^{r}.
+]
+
+**Steps (fixed-point):**
+
+1. Convert Q4.13 logit (x) to **u = x/ln2** using a fixed multiplier:
+   `INV_LN2_Q16 = round((1/ln2)·2^16) = 94447`.
+   `u = (x * INV_LN2_Q16) >> 16`  // u is Q4.13
+2. Choose **n = round(u)** (round to nearest keeps r small).
+   `n = (u + 0.5) floor` implemented as add (2^{(−FRAC)}) before trunc.
+3. Remainder in “natural base” domain:
+   `r = x - n*LN2_Q13`, with `LN2_Q13 = round(ln2·2^13) = 5675`.
+   Now (r \in [-0.3466, +0.3466]) (nice and small).
+4. **Polynomial for (e^{r})** on that tiny interval (Horner form, Q0.16):
+   Use the truncated Maclaurin (good here) — constants in **Q0.16**:
+
+   * (1) → `1_Q16 = 65536`
+   * (1) → (coefficient of r)
+   * (1/2) → `32768`
+   * (1/6) → `10923`
+   * (1/24) → `2731` (optional quartic term)
+
+   Evaluate:
+
+   ```verilog
+   // r is Q4.13; convert to Q0.16: r16 = r << (16-13) = r << 3
+   t  = r16;                            // Q0.16
+   p  = 2731;                           // = 1/24 in Q0.16 (optional)
+   p  = p * t >> 16;  p += 10923;       // + 1/6, Q0.16
+   p  = p * t >> 16;  p += 32768;       // + 1/2
+   p  = p * t >> 16;  p += 65536;       // + 1
+   p  = p * t >> 16;  p += 65536;       // + r term (coefficient = 1)
+   // p ≈ e^r in Q0.16
+   ```
+
+   For minimal gates you can drop the quartic (use up to r^3): error stays tiny because |r|≤0.35.
+5. Apply (2^n) by **shifts**:
+
+   ```verilog
+   // scale p (Q0.16) by 2^n
+   e[j] = (n>=0) ? sat16(p << n) : (p >> (-n));  // keep Q0.16
+   ```
+
+> This uses only multipliers/adders/shifts and a few **constants** — no tables.
+
+## 3) Sum + **reciprocal without LUT** (seed + Newton)
+
+* Sum exponentials: `Z = e0 + e1 + e2 + e3` in **Q3.16**.
+* **Normalize** Z into ([0.5,1)) by shifting: find shift `s` so that `Z1 = Z << s` (or `>>`) lands in that interval (use a leading-one detector). Track `s`.
+* **Magic linear seed** for (1/z) on ([0.5,1)) (no LUT):
+  [
+  R_0 \approx \frac{48}{17} - \frac{32}{17},Z_1.
+  ]
+  Constants (Q0.16):
+  `C = round((48/17)*2^16) = 185043`,
+  `D = round((32/17)*2^16) = 123362`.
+
+  ```verilog
+  R0 = C - ((D * Z1) >> 16);         // Q0.16
+  ```
+* **One Newton step** (Q0.16) gives ~14–16 effective bits:
+
+  ```verilog
+  T  = (Z1 * R0) >> 16;              // Q0.16
+  R1 = (R0 * ( (2<<16) - T )) >> 16; // Q0.16
+  ```
+* Undo normalization: if Z was scaled by (2^{s}) to make Z1, then (1/Z = R1 / 2^{s}) → shift:
+
+  ```verilog
+  R = (s>=0) ? (R1 >> s) : (R1 << (-s));   // Q0.16
+  ```
+
+## 4) Weights
+
+```verilog
+a[j] = (e[j] * R) >> 16;     // Q0.16
+// a[0]+a[1]+a[2]+a[3] ≈ 1.0 (tiny rounding error)
+```
+
+That’s your **softmax row** with **zero LUTs**.
+
+---
+
+## If you also need **ln(x)** (no LUT)
+
+Normalize (y) (Q0.16) to (y = m·2^k) with (m∈[1,2)). Then:
+[
+\ln y = k\ln 2 + \ln m,\quad \text{with } m=1+t,; t∈[0,1).
+]
+Use a short polynomial for (\ln(1+t)) (Horner, Q0.16):
+[
+\ln(1+t)\approx t - \tfrac{1}{2}t^2 + \tfrac{1}{3}t^3 - \tfrac{1}{4}t^4.
+]
+Coeffs in Q0.16:
+`+1` = 65536, `−1/2` = −32768, `+1/3` = 21845, `−1/4` = −16384.
+Then:
+
+```verilog
+t = m - (1<<16);             // Q0.16, since m in [1,2)
+p = -16384;                  // -1/4
+p = (p*t >> 16) + 21845;     // +1/3
+p = (p*t >> 16) - 32768;     // -1/2
+p = (p*t >> 16) + 65536;     // +1
+ln_m = (p*t) >> 16;          // Q0.16
+ln_y = ln_m + k * LN2_Q16;   // LN2_Q16=45426
+```
+
+(If you want tighter error, first fold (m) into ([\sqrt{2}/2, \sqrt{2})) by optionally shifting an extra 1 and adjusting k; this centers t around 0.)
+
+---
+
+## Notes on precision & cost
+
+* **No LUTs**: only constant multipliers/adders/shifters.
+* **exp**: Range-reduced cubic (or quartic) on (|r|≤0.3466) gives very small error (≪1e−3 abs).
+* **1/Z**: the linear magic seed + one Newton step typically yields ~15 bits of accuracy.
+* For extra robustness (since you skip max-sub), optionally **cool the logits** by 1 bit: `x >>= 1` → range ±4; makes saturation impossible and often improves stability.
+
+---
+
+### Constants (ready to use)
+
+* `INV_LN2_Q16 = 94447`  // 1/ln2
+* `LN2_Q13    = 5675`    // ln2 in Q4.13
+* `LN2_Q16    = 45426`   // ln2 in Q0.16
+* Poly (Q0.16): `1=65536`, `1/2=32768`, `1/6=10923`, `1/24=2731`
+* Reciprocal seed (Q0.16): `C=185043`, `D=123362`
