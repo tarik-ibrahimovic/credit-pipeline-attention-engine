@@ -102,7 +102,7 @@ module tt_um_attention_top (
     wire signed [7:0] ex_output;
     wire signed [16:0] mac_div2 = {mac_reg[16], mac_reg[16:1]}; // Q3.13
     ex u_ex (
-      .mac_output(mac_div2),
+      .mac_result(mac_div2),
       .ex_result(ex_output)
     );
 
