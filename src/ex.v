@@ -1,6 +1,6 @@
 module ex (
     input  wire [7:0] mac_result,  // Q1.6
-    output wire [7:0] ex_result    // Q1.6
+    output wire [8:0] ex_result    // UQ3.6
 );
     // Alias
     wire signed [7:0] x = mac_result;  // Q1.6
@@ -13,8 +13,7 @@ module ex (
 
     // Round-to-nearest for signed Q2.6: add/sub 0.5 (=32) then >>>6
     wire signed [15:0] nq2_6_rnd = nq2_6 + (nq2_6[15] ? -16'sd32 : 16'sd32);
-    wire signed [4:0]  n_tmp     = nq2_6_rnd >>> 6;  // small signed integer
-    wire signed [2:0]  n_round   = n_tmp[2:0];       // clamp to [-3..+3] range
+    wire signed [2:0]  n_round   = 3'(nq2_6_rnd >>> 6);       // clamp to [-3..+3] range
 
     // ---- r = x - n*ln2 in Q1.6; ln2 ≈ 44/64 = 32+8+4 ----
     // Sign-extend n_round to 10b before shifts (avoids WIDTHEXPAND)
@@ -31,10 +30,10 @@ module ex (
     wire signed [15:0] e_scaled_pos =
         (n_round >= 0) ? (e_r16 <<< n_round) : (e_r16 >>> (-n_round));
 
-    // ---- Saturate to 8-bit Q1.6: [0 .. 127] ----
-    wire [7:0] e_sat =
-        (e_scaled_pos[15] == 1'b1) ? 8'd0 :
-        (|e_scaled_pos[15:7]        ? 8'd127 : e_scaled_pos[7:0]);
+    // Q1.6 -> UQ3.5 + clipping
+    wire [8:0] e_sat = e_scaled_pos[15] ? 9'd0 :
+                    (|e_scaled_pos[15:9] ? 9'h1FF : e_scaled_pos[8:0]);
+
 
     assign ex_result = e_sat;
 endmodule

@@ -104,9 +104,10 @@ module tt_um_attention_top (
     wire signed [7:0] mac_reduced = mac_div2[16:9];
     ex u_ex (
       .mac_result(mac_reduced), // Q1.6
-      .ex_result(ex_output)
+      .ex_result(ex_output) // Q1.6
     );
 
+    wire
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 
 endmodule
