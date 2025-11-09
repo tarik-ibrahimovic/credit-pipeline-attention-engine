@@ -265,3 +265,9 @@ ln_y = ln_m + k * LN2_Q16;   // LN2_Q16=45426
 * `LN2_Q16    = 45426`   // ln2 in Q0.16
 * Poly (Q0.16): `1=65536`, `1/2=32768`, `1/6=10923`, `1/24=2731`
 * Reciprocal seed (Q0.16): `C=185043`, `D=123362`
+
+
+## Inputs should be quantized from -1 to 1 (Q0.7) 8 bits
+## MAC output (dmodel, L = 4) gives scores -2<si<2, (Q1.15) 17 bits
+## We take just Q1.6 as input to e^xe^x range is 0<e^si<e^2 = 7.389 (UQ3.7) 10 bits -> 2^-7 ~ e^-4 error
+## 

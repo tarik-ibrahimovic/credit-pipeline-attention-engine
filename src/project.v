@@ -6,7 +6,7 @@
 `default_nettype none
 
 module tt_um_attention_top (
-    input  wire [7:0] ui_in,    // Q1.6
+    input  wire [7:0] ui_in,    // Q0.7 (-1,1-2^-7)
     output wire [7:0] uo_out,   
 
     input  wire [7:0] uio_in,   
@@ -100,9 +100,10 @@ module tt_um_attention_top (
     // e^x
     //----
     wire signed [7:0] ex_output;
-    wire signed [16:0] mac_div2 = {mac_reg[16], mac_reg[16:1]}; // Q3.13
+    wire signed [16:0] mac_div2 = {mac_reg[16], mac_reg[16:1]}; // Q2.14 -> Q1.15
+    wire signed [7:0] mac_reduced = mac_div2[16:9];
     ex u_ex (
-      .mac_result(mac_div2),
+      .mac_result(mac_reduced), // Q1.6
       .ex_result(ex_output)
     );
 
