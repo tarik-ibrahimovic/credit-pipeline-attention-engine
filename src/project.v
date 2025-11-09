@@ -107,7 +107,6 @@ module tt_um_attention_top (
       .ex_result(ex_output) // UQ3.5
     );
 
-    wire
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 
 endmodule
