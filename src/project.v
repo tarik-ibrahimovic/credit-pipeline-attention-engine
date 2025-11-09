@@ -22,7 +22,8 @@ module tt_um_attention_top (
     wire [7:0] qv_slv_in   = ui_in;
     
     wire [7:0] score_mst_out_w;
-    assign uo_out = sum_exs[7:0];
+    assign uo_out = ex_output[7:0];
+    assign uio_out[4] = ex_output[8];
     
     wire vld_slv_in = uio_in[0];
     
@@ -37,11 +38,10 @@ module tt_um_attention_top (
 
     assign uio_oe [0] = 1'b0; 
     assign uio_oe [1] = 1'b1; 
-
     assign uio_oe [2] = 1'b1; 
     assign uio_oe [3] = 1'b0; 
-    
-    assign uio_oe [7:4] = 4'b0; 
+    assign uio_oe [4] = 1'b1; // last bit of ex_output
+    assign uio_oe [7:5] = 3'b0; 
 
     assign uio_out[0] = 1'b0; 
     assign uio_out[3] = 1'b0; 
@@ -113,53 +113,21 @@ module tt_um_attention_top (
 
     // Shift regs for e^x of each row member
     reg [1:0] count_ex; // count the number of rows done
-    reg [8:0] ex_output_reg [4];
     always @(posedge clk) begin
       if(rst_n == 1'b0) begin
-        count_ex <= 2'b0;
+        vld_mst_out_w <= 1'b0;
       end
       else begin
-        if (input_reg_state == FIRST & count_mac == 2'h3 | count_ex == 2'd3 ) begin
-          
-          ex_output_reg[0] <= count_ex == 2'd3 ? ex_output[3] : ex_output;
-          for (integer i = 0; i < 3; i++) begin
-            ex_output_reg[i+1] <= ex_output_reg[i];
-          end
-          if(count_ex != 2'd3)
-            count_ex <= count_ex + 1;
-          if (count_acc == 2'd3) begin
-            count_ex <= 2'd0;
-          end
+        if (input_reg_state == FIRST & count_mac == 2'h3) begin
+          vld_mst_out_w <= 1'b1;
+        end
+        if (rdy_mst_in == 1'b1 & vld_mst_out_w == 1'b1) begin
+          vld_mst_out_w <= 1'b0;
         end
       end
     end
-
-    // sum everything after 4 inputs
-    reg [10:0] sum_exs;
-    reg [1:0] count_acc;
-    always @(posedge clk) begin // 7.3*4 = 30  U5.6
-      if (rst_n == 0) begin
-        sum_exs <= 0;  
-        count_acc <= 0;
-      end 
-      else begin
-        if (count_ex == 2'd3) begin
-          sum_exs <= sum_exs + ex_output_reg[3];
-          count_acc <= count_acc + 1;
-        end
-        if (count_acc > 0) begin
-          count_acc <= count_acc + 1;
-          sum_exs <= sum_exs + ex_output_reg[3];  
-        end
-        if (count_acc == 2'd3) begin
-          count_acc <= 2'd0;
-        end
-        
-      end
-
-    end
-
     // divide each by sum_ex and output
+
 
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 
