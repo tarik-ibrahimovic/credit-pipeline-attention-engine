@@ -17,118 +17,118 @@ module tt_um_attention_top (
     input  wire       clk,      
     input  wire       rst_n     
 );
-  // uio [0,1] used as slave vld/rdy
-  // uio [2,3] used as master vld/rdy
+
+    //-------------------------------------
+    // I/O mapping
+    //-------------------------------------
     wire [7:0] qv_slv_in   = ui_in;
-    
-    assign uo_out = ex_output_reg[7:0];
-    assign uio_out[4] = ex_output_reg[8];
-    
+
     wire vld_slv_in = uio_in[0];
-    
-    wire rdy_slv_out_w; 
-    assign uio_out[1] = rdy_slv_out_w;
-    
-    reg vld_mst_out_w; 
-    assign uio_out[2] = vld_mst_out_w;
-    
     wire rdy_mst_in = uio_in[3];
 
+    reg  vld_mst_out_w;
+    wire rdy_slv_out_w;
 
-    assign uio_oe [0] = 1'b0; 
-    assign uio_oe [1] = 1'b1; 
-    assign uio_oe [2] = 1'b1; 
-    assign uio_oe [3] = 1'b0; 
-    assign uio_oe [4] = 1'b1; // last bit of ex_output
-    assign uio_oe [7:5] = 3'b0; 
+    wire signed [8:0] ex_output;
+    reg  signed [8:0] ex_output_reg; // latched output value
 
-    assign uio_out[0] = 1'b0; 
-    assign uio_out[3] = 1'b0; 
-    assign uio_out[7:5] = 3'b0; 
-        
+    // Assign outputs
+    assign uo_out      = ex_output_reg[7:0];
+    assign uio_out[4]  = ex_output_reg[8];
+    assign uio_out[1]  = rdy_slv_out_w;
+    assign uio_out[2]  = vld_mst_out_w;
+    assign uio_out[0]  = 1'b0;
+    assign uio_out[3]  = 1'b0;
+    assign uio_out[7:5]= 3'b0;
+
+    // Output enables
+    assign uio_oe = 8'b00010110; // [4,2,1] outputs enabled
+
     //-------------------------------------
-    // MAC one row one column of 4 features
+    // MAC one row × one column of 4 features
     //-------------------------------------
     typedef enum reg [1:0] {
-      FIRST  =  2'b00,
-      WAIT4SECOND =  2'b01,
-      READY  =  2'b10
+      FIRST        = 2'b00,
+      WAIT4SECOND  = 2'b01,
+      READY        = 2'b10
     } input_reg_state_t;
-    
-    input_reg_state_t input_reg_state; 
-    reg signed  [7:0] input_reg; 
-    
+
+    input_reg_state_t input_reg_state;
+    reg  signed [7:0]  input_reg;
+    reg  signed [16:0] mac_reg;
+    reg  [1:0]         count_mac;
+
     wire signed [16:0] qv_mult = input_reg * $signed(qv_slv_in);
-    reg signed [16:0]  mac_reg;
 
-    assign rdy_slv_out_w = (input_reg_state == FIRST | input_reg_state == READY);
+    assign rdy_slv_out_w = (input_reg_state == FIRST) || (input_reg_state == READY);
 
-    reg [1:0] count_mac;
-
-    always @(posedge clk) begin 
-      if (rst_n == 1'b0) begin
-        input_reg_state <= FIRST;
-        mac_reg         <= 17'd0;
-        input_reg       <= 8'd0; 
-        count_mac       <= 2'b0;
-      end
-      else begin
-        case (input_reg_state)
-          FIRST: begin
-            if ({vld_slv_in, rdy_slv_out_w} == 2'b11) begin
-              input_reg       <= qv_slv_in;
-              input_reg_state <= WAIT4SECOND;
-              if (count_mac == 0) begin
-                mac_reg <= 0;
-              end
-            end
-          end
-          WAIT4SECOND: begin
-            if (vld_slv_in == 1'b1) begin
-              input_reg_state <= READY;
-            end
-          end
-          READY: begin
-            mac_reg <= 17'(mac_reg + 17'(qv_mult));
+    always @(posedge clk) begin
+        if (!rst_n) begin
             input_reg_state <= FIRST;
-            count_mac <= count_mac + 1;
-          end
-          default: begin
-          end
-        endcase
-      end
+            mac_reg         <= 17'd0;
+            input_reg       <= 8'd0;
+            count_mac       <= 2'd0;
+        end else begin
+            case (input_reg_state)
+                FIRST: begin
+                    if (vld_slv_in && rdy_slv_out_w) begin
+                        input_reg       <= qv_slv_in;
+                        input_reg_state <= WAIT4SECOND;
+                        if (count_mac == 0)
+                            mac_reg <= 17'd0;
+                    end
+                end
+                WAIT4SECOND: begin
+                    if (vld_slv_in)
+                        input_reg_state <= READY;
+                end
+                READY: begin
+                    mac_reg         <= mac_reg + qv_mult;
+                    input_reg_state <= FIRST;
+                    count_mac       <= count_mac + 1'b1;
+                    if (count_mac == 2'd3)
+                        count_mac <= 2'd0; // wrap after 4 MACs
+                end
+                default: input_reg_state <= FIRST;
+            endcase
+        end
     end
 
-    //----
-    // e^x
-    //----
-    wire signed [8:0] ex_output;
-    wire signed [16:0] mac_div2 = {mac_reg[16], mac_reg[16:1]}; // Q2.14 -> Q1.15
-    wire signed [7:0] mac_reduced = mac_div2[16:9];
+    //-------------------------------------
+    // e^x computation (UQ3.6)
+    //-------------------------------------
+    wire signed [16:0] mac_div2    = {mac_reg[16], mac_reg[16:1]}; // Q2.14 -> Q1.15
+    wire signed [7:0]  mac_reduced = mac_div2[16:9];               // Q1.6
+
     ex u_ex (
-      .mac_result(mac_reduced), // Q1.6
-      .ex_result(ex_output) // UQ3.6
+        .mac_result(mac_reduced),
+        .ex_result (ex_output)
     );
 
-    // Shift regs for e^x of each row member
-    reg [8:0] ex_output_reg; // count the number of rows done
+    //-------------------------------------
+    // Output handshake and valid control
+    //-------------------------------------
     always @(posedge clk) begin
-      if(rst_n == 1'b0) begin
-        vld_mst_out_w <= 1'b0;
-      end
-      else begin
-        if (input_reg_state == FIRST & count_mac == 2'h3) begin
-          vld_mst_out_w <= 1'b1;
-          ex_output_reg <= ex_output;
+        if (!rst_n) begin
+            vld_mst_out_w  <= 1'b0;
+            ex_output_reg  <= 9'd0;
+        end else begin
+            // When 4th multiply done, latch exp() output and raise valid
+            if ((input_reg_state == FIRST) && (count_mac == 2'd3)) begin
+                vld_mst_out_w <= 1'b1;
+                ex_output_reg <= ex_output;
+            end
+
+            // Drop valid once master has acknowledged
+            if (rdy_mst_in && vld_mst_out_w) begin
+                vld_mst_out_w <= 1'b0;
+            end
         end
-        if (rdy_mst_in == 1'b1 & vld_mst_out_w == 1'b1) begin
-          vld_mst_out_w <= 1'b0;
-        end
-      end
     end
-    // divide each by sum_ex and output
 
-
-    wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
+    //-------------------------------------
+    // Unused signals (to avoid warnings)
+    //-------------------------------------
+    wire _unused = &{ena, clk, rst_n, uio_in[7:5], 1'b0};
 
 endmodule
