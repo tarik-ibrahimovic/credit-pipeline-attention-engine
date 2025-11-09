@@ -21,9 +21,8 @@ module tt_um_attention_top (
   // uio [2,3] used as master vld/rdy
     wire [7:0] qv_slv_in   = ui_in;
     
-    wire [7:0] score_mst_out_w;
-    assign uo_out = ex_output[7:0];
-    assign uio_out[4] = ex_output[8];
+    assign uo_out = ex_output_reg[7:0];
+    assign uio_out[4] = ex_output_reg[8];
     
     wire vld_slv_in = uio_in[0];
     
@@ -46,9 +45,7 @@ module tt_um_attention_top (
     assign uio_out[0] = 1'b0; 
     assign uio_out[3] = 1'b0; 
     assign uio_out[7:5] = 3'b0; 
-    
-    assign vld_mst_out_w = 1'b0; 
-    
+        
     //-------------------------------------
     // MAC one row one column of 4 features
     //-------------------------------------
@@ -65,7 +62,6 @@ module tt_um_attention_top (
     reg signed [16:0]  mac_reg;
 
     assign rdy_slv_out_w = (input_reg_state == FIRST | input_reg_state == READY);
-    assign score_mst_out_w = mac_div2[7:0]; 
 
     reg [1:0] count_mac;
 
@@ -82,6 +78,9 @@ module tt_um_attention_top (
             if ({vld_slv_in, rdy_slv_out_w} == 2'b11) begin
               input_reg       <= qv_slv_in;
               input_reg_state <= WAIT4SECOND;
+              if (count_mac == 0) begin
+                mac_reg <= 0;
+              end
             end
           end
           WAIT4SECOND: begin
@@ -112,7 +111,7 @@ module tt_um_attention_top (
     );
 
     // Shift regs for e^x of each row member
-    reg [1:0] count_ex; // count the number of rows done
+    reg [8:0] ex_output_reg; // count the number of rows done
     always @(posedge clk) begin
       if(rst_n == 1'b0) begin
         vld_mst_out_w <= 1'b0;
@@ -120,6 +119,7 @@ module tt_um_attention_top (
       else begin
         if (input_reg_state == FIRST & count_mac == 2'h3) begin
           vld_mst_out_w <= 1'b1;
+          ex_output_reg <= ex_output;
         end
         if (rdy_mst_in == 1'b1 & vld_mst_out_w == 1'b1) begin
           vld_mst_out_w <= 1'b0;
