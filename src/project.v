@@ -30,7 +30,7 @@ module tt_um_attention_top (
     wire rdy_slv_out_w; 
     assign uio_out[1] = rdy_slv_out_w;
     
-    wire vld_mst_out_w; 
+    reg vld_mst_out_w; 
     assign uio_out[2] = vld_mst_out_w;
     
     wire rdy_mst_in = uio_in[3];
@@ -45,7 +45,7 @@ module tt_um_attention_top (
 
     assign uio_out[0] = 1'b0; 
     assign uio_out[3] = 1'b0; 
-    assign uio_out[7:4] = 4'b0; 
+    assign uio_out[7:5] = 3'b0; 
     
     assign vld_mst_out_w = 1'b0; 
     

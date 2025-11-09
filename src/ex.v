@@ -28,7 +28,7 @@ module ex (
     // r^2: (Q0.16)^2 = Q0.32
     wire signed [37:0] r2_q0_32 = $signed(r_q0_16) * $signed(r_q0_16);
     // Downscale to Q0.16, then divide by 2 for (r^2)/2
-    wire signed [21:0] r2_q0_16 = r2_q0_32 >>> 16;                          // 22b Q0.16
+    wire signed [21:0] r2_q0_16 = 22'(r2_q0_32 >>> 16);                          // 22b Q0.16
     wire signed [21:0] r2h_q0_16 = r2_q0_16 >>> 1;                          // (r^2)/2, Q0.16
 
     // Align widths to 22 bits and sum: 1 + r + r^2/2  (1.0 in Q0.16 = 65536)
