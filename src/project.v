@@ -67,12 +67,14 @@ module tt_um_attention_top (
     assign rdy_slv_out_w = (input_reg_state == FIRST | input_reg_state == READY);
     assign score_mst_out_w = mac_div2[7:0]; 
 
+    reg [1:0] count_mac;
 
     always @(posedge clk) begin 
       if (rst_n == 1'b0) begin
         input_reg_state <= FIRST;
         mac_reg         <= 17'd0;
         input_reg       <= 8'd0; 
+        count_mac       <= 2'b0;
       end
       else begin
         case (input_reg_state)
@@ -90,6 +92,7 @@ module tt_um_attention_top (
           READY: begin
             mac_reg <= 17'(mac_reg + 17'(qv_mult));
             input_reg_state <= FIRST;
+            count_mac <= count_mac + 1;
           end
           default: begin
           end
@@ -108,16 +111,26 @@ module tt_um_attention_top (
       .ex_result(ex_output) // UQ3.6
     );
 
+    // Shift regs for e^x of each row member
+    reg [1:0] count_ex; // count the number of rows done
     reg [8:0] ex_output_reg [4];
-
     always @(posedge clk) begin
-      
-      ex_output_reg[0] <= ex_output;
-      for (integer i = 0; i < 3; i++) begin
-        ex_output_reg[i+1] <= ex_output_reg[i];
+      if(rst_n == 1'b0) begin
+        count_ex <= 2'b0;
       end
-
+      else begin
+        if (input_reg_state == FIRST & count_mac == 2'h3) begin
+          ex_output_reg[0] <= ex_output;
+          for (integer i = 0; i < 3; i++) begin
+            ex_output_reg[i+1] <= ex_output_reg[i];
+          end
+          count_ex <= count_ex + 1;
+        end
+      end
     end
+
+    // sum everything after 4 inputs
+
 
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 
