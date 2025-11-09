@@ -89,6 +89,7 @@ module tt_um_attention_top (
           end
           READY: begin
             mac_reg <= 17'(mac_reg + 17'(qv_mult));
+            input_reg_state <= FIRST;
           end
           default: begin
           end
@@ -104,8 +105,19 @@ module tt_um_attention_top (
     wire signed [7:0] mac_reduced = mac_div2[16:9];
     ex u_ex (
       .mac_result(mac_reduced), // Q1.6
-      .ex_result(ex_output) // UQ3.5
+      .ex_result(ex_output) // UQ3.6
     );
+
+    reg [8:0] ex_output_reg [4];
+
+    always @(posedge clk) begin
+      if ()
+      ex_output_reg[0] <= ex_output;
+      for (integer i = 0; i < 3; i++) begin
+        ex_output_reg[i+1] <= ex_output_reg[i];
+      end
+
+    end
 
     wire _unused = &{ena, clk, rst_n, rdy_mst_in, uio_in[7:4], 1'b0};
 
