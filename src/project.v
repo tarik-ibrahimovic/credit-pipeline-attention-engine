@@ -22,7 +22,7 @@ module tt_um_attention_top (
     wire [7:0] qv_slv_in   = ui_in;
     
     wire [7:0] score_mst_out_w;
-    assign uo_out = ex_output[7:0];
+    assign uo_out = sum_exs[7:0];
     
     wire vld_slv_in = uio_in[0];
     
@@ -130,10 +130,19 @@ module tt_um_attention_top (
     end
 
     // sum everything after 4 inputs
-    // reg [10:0] sum_exs;
-    // always @(posedge clk) begin // 7.3*4 = 30  U5.6
-    //   sum_exs <= ex_output_reg[0] + ex_output_reg[1] + ex_output_reg [2] + ex_output_reg[3];
-    // end
+    reg [10:0] sum_exs;
+    reg [1:0] count_acc;
+    always @(posedge clk) begin // 7.3*4 = 30  U5.6
+      if (rst_n == 0) begin
+        sum_exs <= 0;  
+        count_acc <= 0;
+      end 
+      else begin
+        sum_exs <= ex_output_reg[count_acc];
+        count_acc <= count_acc + 1;
+      end
+
+    end
 
     // divide each by sum_ex and output
 
