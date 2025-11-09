@@ -119,12 +119,17 @@ module tt_um_attention_top (
         count_ex <= 2'b0;
       end
       else begin
-        if (input_reg_state == FIRST & count_mac == 2'h3) begin
-          ex_output_reg[0] <= ex_output;
+        if (input_reg_state == FIRST & count_mac == 2'h3 | count_ex == 2'd3 ) begin
+          
+          ex_output_reg[0] <= count_ex == 2'd3 ? ex_output[3] : ex_output;
           for (integer i = 0; i < 3; i++) begin
             ex_output_reg[i+1] <= ex_output_reg[i];
           end
-          count_ex <= count_ex + 1;
+          if(count_ex != 2'd3)
+            count_ex <= count_ex + 1;
+          if (count_acc == 2'd3) begin
+            count_ex <= 2'd0;
+          end
         end
       end
     end
@@ -138,8 +143,18 @@ module tt_um_attention_top (
         count_acc <= 0;
       end 
       else begin
-        sum_exs <= ex_output_reg[count_acc];
-        count_acc <= count_acc + 1;
+        if (count_ex == 2'd3) begin
+          sum_exs <= sum_exs + ex_output_reg[3];
+          count_acc <= count_acc + 1;
+        end
+        if (count_acc > 0) begin
+          count_acc <= count_acc + 1;
+          sum_exs <= sum_exs + ex_output_reg[3];  
+        end
+        if (count_acc == 2'd3) begin
+          count_acc <= 2'd0;
+        end
+        
       end
 
     end

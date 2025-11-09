@@ -24,16 +24,17 @@ module ex (
     // ==== Polynomial in Q0.16: e^r ≈ 1 + r + r^2/2 ====
     // Convert r from Q1.6 -> Q0.16 by left shift of (16-6)=10
     wire signed [18:0] r_q0_16  = {{10{r_q16[8]}}, r_q16} <<< 10;          // 19b Q0.16
-    // r^2: (Q0.16)^2 = Q0.32
-    wire signed [37:0] r2_q0_32 = $signed(r_q0_16) * $signed(r_q0_16);
-    // Downscale to Q0.16, then divide by 2 for (r^2)/2
-    wire signed [21:0] r2_q0_16 = r2_q0_32 >>> 16;                          // 22b Q0.16
-    wire signed [21:0] r2h_q0_16 = r2_q0_16 >>> 1;                          // (r^2)/2, Q0.16
+
+    // // r^2: (Q0.16)^2 = Q0.32
+    // wire signed [37:0] r2_q0_32 = $signed(r_q0_16) * $signed(r_q0_16);
+    // // Downscale to Q0.16, then divide by 2 for (r^2)/2
+    // wire signed [21:0] r2_q0_16 = r2_q0_32 >>> 16;                          // 22b Q0.16
+    // wire signed [21:0] r2h_q0_16 = r2_q0_16 >>> 1;                          // (r^2)/2, Q0.16
 
     // Align widths to 22 bits and sum: 1 + r + r^2/2  (1.0 in Q0.16 = 65536)
     wire signed [21:0] one_q0_16 = 22'sd65536;
     wire signed [21:0] r_ext_q0_16 = {{(22-19){r_q0_16[18]}}, r_q0_16};     // extend 19b -> 22b
-    wire signed [21:0] e_r_q0_16 = one_q0_16 + r_ext_q0_16 + r2h_q0_16;     // Q0.16, positive
+    wire signed [21:0] e_r_q0_16 = one_q0_16 + r_ext_q0_16; //+ r2h_q0_16;     // Q0.16, positive
 
     // ---- Apply 2^n via conditional shift (keep wide to avoid overflow) ----
     wire signed [31:0] e_r_wide = {{10{e_r_q0_16[21]}}, e_r_q0_16};         // 22b -> 32b
