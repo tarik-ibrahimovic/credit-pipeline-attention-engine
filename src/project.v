@@ -22,7 +22,7 @@ module tt_um_attention_top (
     wire [7:0] qv_slv_in   = ui_in;
     
     wire [7:0] score_mst_out_w;
-    assign uo_out = score_mst_out_w;
+    assign uo_out = ex_output;
     
     wire vld_slv_in = uio_in[0];
     
