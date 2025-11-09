@@ -111,7 +111,7 @@ module tt_um_attention_top (
     reg [8:0] ex_output_reg [4];
 
     always @(posedge clk) begin
-      if ()
+      
       ex_output_reg[0] <= ex_output;
       for (integer i = 0; i < 3; i++) begin
         ex_output_reg[i+1] <= ex_output_reg[i];
