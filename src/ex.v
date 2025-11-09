@@ -34,6 +34,5 @@ module ex (
     wire [8:0] e_sat = e_scaled_pos[15] ? 9'd0 :
                     (|e_scaled_pos[15:9] ? 9'h1FF : e_scaled_pos[8:0]);
 
-
     assign ex_result = e_sat;
 endmodule

@@ -22,7 +22,7 @@ module tt_um_attention_top (
     wire [7:0] qv_slv_in   = ui_in;
     
     wire [7:0] score_mst_out_w;
-    assign uo_out = ex_output;
+    assign uo_out = ex_output[7:0];
     
     wire vld_slv_in = uio_in[0];
     
@@ -99,12 +99,12 @@ module tt_um_attention_top (
     //----
     // e^x
     //----
-    wire signed [7:0] ex_output;
+    wire signed [8:0] ex_output;
     wire signed [16:0] mac_div2 = {mac_reg[16], mac_reg[16:1]}; // Q2.14 -> Q1.15
     wire signed [7:0] mac_reduced = mac_div2[16:9];
     ex u_ex (
       .mac_result(mac_reduced), // Q1.6
-      .ex_result(ex_output) // Q1.6
+      .ex_result(ex_output) // UQ3.5
     );
 
     wire
