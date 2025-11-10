@@ -125,7 +125,7 @@ module tt_um_attention_top (
             end
         end
     end
-
+    // a comment to throw yosys seed in order not to have FEOL errors
     //-------------------------------------
     // Unused signals (to avoid warnings)
     //-------------------------------------
