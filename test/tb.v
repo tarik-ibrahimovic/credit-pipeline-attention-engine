@@ -10,7 +10,6 @@ module tb ();
   initial begin
     $dumpfile("tb.vcd");
     $dumpvars(0, tb);
-    $dumpvars(0, u_dut);
     #1;
   end
 

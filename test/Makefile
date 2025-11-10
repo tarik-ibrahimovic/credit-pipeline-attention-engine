@@ -18,8 +18,6 @@ else
 
 # Gate level simulation:
 SIM_BUILD				= sim_build/gl
-COMPILE_ARGS += -g2012       # allow SystemVerilog
-COMPILE_ARGS += -DTRACE_VCD  # tell tb.v to dump waves
 COMPILE_ARGS    += -DGL_TEST
 COMPILE_ARGS    += -DFUNCTIONAL
 COMPILE_ARGS    += -DUSE_POWER_PINS
@@ -30,21 +28,11 @@ VERILOG_SOURCES += $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog/sky130_f
 
 # this gets copied in by the GDS action workflow
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
-WAVES ?= 1
-WAVEFORM_FORMAT ?= fst  
-FST ?= 1
+
 endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
-# COMPILE_ARGS += --trace --trace-fst --trace-structs
-
-# VERILATOR_COMPILE_ARGS += --trace-fst --timing
-# Run side: actually enable tracing and set the output path explicitly
-# VERILATOR_RUN_ARGS += +trace +dumpfile=$(SIM_BUILD)/waves.fst
-
-# SIM_ARGS += +trace +dumpfile=$(SIM_BUILD)/waves.fst
-
 # Verilator 5+: enable simple timing
 # COMPILE_ARGS += --timing
 # COMPILE_ARGS += -Wno-fatal

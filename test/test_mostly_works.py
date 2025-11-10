@@ -111,7 +111,7 @@ async def test_single_dot_exp(dut):
     y_ref = float(np.exp(x_real))
 
     # Tolerance for your simple exp approximation & quantization
-    tol = 0.4
+    tol = 0.12
     abs_err = abs(y_dut - y_ref)
 
     dut._log.info(f"x_real={x_real:.6f}  DUT={y_dut:.6f}  REF={y_ref:.6f}  abs_err={abs_err:.6f}")
@@ -224,7 +224,7 @@ async def test_fourth_term_dominates(dut):
     x_real = x_fixed / 64.0
     y_ref = float(np.exp(x_real))
 
-    tol = 0.4
+    tol = 0.12
     assert abs(y_dut - y_ref) <= tol, f"abs err {abs(y_dut - y_ref):.4f} > {tol:.4f}"
 
 
@@ -300,7 +300,7 @@ async def test_extreme_ranges(dut):
         y_ref = float(np.exp(x_real))
 
         # Relax tolerance slightly for extremes
-        tol = 0.4
+        tol = 0.12
         assert abs(y_dut - y_ref) <= tol, f"[case {idx}] |err|={abs(y_dut-y_ref):.4f} > {tol:.4f}"
 
 
@@ -339,7 +339,7 @@ async def test_random_fuzz_100(dut):
         x_real = x_fixed / 64.0
         y_ref = float(np.exp(x_real))
 
-        tol = 0.44 # we expect 0.4 since only e^x delivers 0.2 at higher values of e^x
+        tol = 0.124 # we expect 0.4 since only e^x delivers 0.2 at higher values of e^x
         assert abs(y_dut - y_ref) <= tol, f"[#{t}] err={abs(y_dut-y_ref):.4f} > {tol:.4f}"
 
         # Weak monotonicity sanity: if x increases noticeably, y should not decrease
