@@ -33,13 +33,13 @@ module tt_um_attention_top (
     reg  signed [8:0] ex_output_reg; // latched output value
 
     // Assign outputs
-    assign uo_out      = ex_output_reg[7:0];
-    assign uio_out[4]  = ex_output_reg[8];
-    assign uio_out[1]  = rdy_slv_out_w;
-    assign uio_out[2]  = vld_mst_out_w;
-    assign uio_out[0]  = 1'b0;
-    assign uio_out[3]  = 1'b0;
-    assign uio_out[7:5]= 3'b0;
+    assign uo_out       = ex_output_reg[7:0];
+    assign uio_out[4]   = ex_output_reg[8];
+    assign uio_out[1]   = rdy_slv_out_w;
+    assign uio_out[2]   = vld_mst_out_w;
+    assign uio_out[0]   = 1'b0;
+    assign uio_out[3]   = 1'b0;
+    assign uio_out[7:5] = 3'b0;
 
     // Output enables
     assign uio_oe = 8'b00010110; // [4,2,1] outputs enabled
@@ -60,10 +60,10 @@ module tt_um_attention_top (
 
     wire signed [16:0] qv_mult = input_reg * $signed(qv_slv_in);
 
-    assign rdy_slv_out_w = (input_reg_state == FIRST) || (input_reg_state == READY);
+    assign rdy_slv_out_w = ((input_reg_state == FIRST) || (input_reg_state == READY)) ? 1'b1 : 1'b0;
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst_n == 1'b0) begin
             input_reg_state <= FIRST;
             mac_reg         <= 17'd0;
             input_reg       <= 8'd0;
@@ -71,15 +71,15 @@ module tt_um_attention_top (
         end else begin
             case (input_reg_state)
                 FIRST: begin
-                    if (vld_slv_in && rdy_slv_out_w) begin
+                    if ( (vld_slv_in == 1'b1) && (rdy_slv_out_w == 1'b1) ) begin
                         input_reg       <= qv_slv_in;
                         input_reg_state <= WAIT4SECOND;
-                        if (count_mac == 0)
+                        if (count_mac == 2'd0)
                             mac_reg <= 17'd0;
                     end
                 end
                 WAIT4SECOND: begin
-                    if (vld_slv_in)
+                    if (vld_slv_in == 1'b1)
                         input_reg_state <= READY;
                 end
                 READY: begin
@@ -89,7 +89,9 @@ module tt_um_attention_top (
                     if (count_mac == 2'd3)
                         count_mac <= 2'd0; // wrap after 4 MACs
                 end
-                default: input_reg_state <= FIRST;
+                default: begin
+                    input_reg_state <= FIRST;
+                end
             endcase
         end
     end
@@ -109,23 +111,23 @@ module tt_um_attention_top (
     // Output handshake and valid control
     //-------------------------------------
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst_n == 1'b0) begin
             vld_mst_out_w  <= 1'b0;
             ex_output_reg  <= 9'd0;
         end else begin
             // When 4th multiply done, latch exp() output and raise valid
-            if ((input_reg_state == FIRST) && (count_mac == 2'd3)) begin
+            if ( (input_reg_state == FIRST) && (count_mac == 2'd3) ) begin
                 vld_mst_out_w <= 1'b1;
                 ex_output_reg <= ex_output;
             end
 
             // Drop valid once master has acknowledged
-            if (rdy_mst_in && vld_mst_out_w) begin
+            if ( (rdy_mst_in == 1'b1) && (vld_mst_out_w == 1'b1) ) begin
                 vld_mst_out_w <= 1'b0;
             end
         end
     end
-    // a comment to throw yosys seed in order not to have FEOL errors
+
     //-------------------------------------
     // Unused signals (to avoid warnings)
     //-------------------------------------
