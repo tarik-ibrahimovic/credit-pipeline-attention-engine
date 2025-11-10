@@ -5,7 +5,7 @@
 SIM ?= icarus
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = ex.v
+PROJECT_SOURCES = ex.v project.v
 
 # Silence missing-pin noise from std-cell/tap instantiations
 ifneq ($(GATES),yes)

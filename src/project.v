@@ -62,12 +62,14 @@ module tt_um_attention_top (
 
     assign rdy_slv_out_w = ((input_reg_state == FIRST) || (input_reg_state == READY)) ? 1'b1 : 1'b0;
 
+    reg done_mac;
     always @(posedge clk) begin
         if (rst_n == 1'b0) begin
             input_reg_state <= FIRST;
             mac_reg         <= 17'd0;
             input_reg       <= 8'd0;
             count_mac       <= 2'd0;
+            done_mac        <= 1'd0;
         end else begin
             case (input_reg_state)
                 FIRST: begin
@@ -76,6 +78,7 @@ module tt_um_attention_top (
                         input_reg_state <= WAIT4SECOND;
                         if (count_mac == 2'd0)
                             mac_reg <= 17'd0;
+                            done_mac <= 1'b0;
                     end
                 end
                 WAIT4SECOND: begin
@@ -87,7 +90,7 @@ module tt_um_attention_top (
                     input_reg_state <= FIRST;
                     count_mac       <= count_mac + 1'b1;
                     if (count_mac == 2'd3)
-                        count_mac <= 2'd0; // wrap after 4 MACs
+                        done_mac <= 1'b1;
                 end
                 default: begin
                     input_reg_state <= FIRST;
@@ -116,7 +119,7 @@ module tt_um_attention_top (
             ex_output_reg  <= 9'd0;
         end else begin
             // When 4th multiply done, latch exp() output and raise valid
-            if ( (input_reg_state == FIRST) && (count_mac == 2'd3) ) begin
+            if ( done_mac == 1'b1 ) begin
                 vld_mst_out_w <= 1'b1;
                 ex_output_reg <= ex_output;
             end
