@@ -47,10 +47,9 @@ module tt_um_attention_top (
     //-------------------------------------
     // MAC one row × one column of 4 features
     //-------------------------------------
-    typedef enum reg [1:0] {
-      FIRST        = 2'b00,
-      WAIT4SECOND  = 2'b01,
-      READY        = 2'b10
+    typedef enum reg {
+      FIRST        = 1'b0,
+      WAIT4SECOND  = 1'b1
     } input_reg_state_t;
 
     input_reg_state_t input_reg_state;
@@ -60,7 +59,7 @@ module tt_um_attention_top (
 
     wire signed [16:0] qv_mult = input_reg * $signed(qv_slv_in);
 
-    assign rdy_slv_out_w = ((input_reg_state == FIRST) || (input_reg_state == READY)) ? 1'b1 : 1'b0;
+    assign rdy_slv_out_w = ((input_reg_state == FIRST) || (input_reg_state == WAIT4SECOND)) ? 1'b1 : 1'b0;
 
     reg done_mac;
     always @(posedge clk) begin
@@ -83,15 +82,13 @@ module tt_um_attention_top (
                     end
                 end
                 WAIT4SECOND: begin
-                    if (vld_slv_in == 1'b1)
-                        input_reg_state <= READY;
-                end
-                READY: begin
-                    mac_reg         <= mac_reg + qv_mult;
-                    input_reg_state <= FIRST;
-                    count_mac       <= count_mac + 1'b1;
-                    if (count_mac == 2'd3)
-                        done_mac <= 1'b1;
+                    if (vld_slv_in == 1'b1) begin
+                        input_reg_state <= FIRST;
+                        mac_reg         <= mac_reg + qv_mult;
+                        count_mac       <= count_mac + 1'b1;
+                        if (count_mac == 2'd3)
+                            done_mac <= 1'b1;
+                    end
                 end
                 default: begin
                     input_reg_state <= FIRST;
