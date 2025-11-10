@@ -76,9 +76,10 @@ module tt_um_attention_top (
                     if ( (vld_slv_in == 1'b1) && (rdy_slv_out_w == 1'b1) ) begin
                         input_reg       <= qv_slv_in;
                         input_reg_state <= WAIT4SECOND;
-                        if (count_mac == 2'd0)
+                        if (count_mac == 2'd0) begin
                             mac_reg <= 17'd0;
                             done_mac <= 1'b0;
+                        end
                     end
                 end
                 WAIT4SECOND: begin

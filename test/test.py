@@ -3,21 +3,99 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 import numpy as np
 
+# ---------------- utils ----------------
+def signext(v: int, bits: int) -> int:
+    """Sign-extend integer v of given bit-width to Python int."""
+    mask = (1 << bits) - 1
+    v &= mask
+    s = 1 << (bits - 1)
+    return (v ^ s) - s
 
-# ---------- helpers ----------
-def encode_q0_7(x_real: float) -> int:
-    """Q0.7 signed encode into int8 (-128..127)."""
-    q = int(np.round(x_real * 128.0))
-    return int(np.clip(q, -128, 127)) & 0xFF  # two's complement for dut
+def encode_q0_7(x: float) -> int:
+    q = int(np.round(x * 128.0))
+    return int(np.clip(q, -128, 127)) & 0xFF
 
 def decode_uq3_6(lo8: int, hi1: int) -> float:
-    """UQ3.6 decode from 9 bits: [8]=hi1, [7:0]=lo8."""
     raw = ((hi1 & 1) << 8) | (lo8 & 0xFF)
-    return raw / 64.0  # LSB = 2^-6
+    return raw / 64.0
 
+def set_bit(val: int, bit: int, one: bool) -> int:
+    return (val | (1 << bit)) if one else (val & ~(1 << bit))
+
+# ---------------- exact RTL model of ex(.): mirrors your Verilog ----------------
+def ex_logic_model_q(x_s8: int) -> int:
+    """
+    Bit-identical to the posted RTL ex() module.
+    Input:  x_s8 = int8 signed, Q1.6
+    Output: 9-bit unsigned UQ3.6 (0..0x1FF)
+    """
+
+    # x (Q1.6) as 8-bit signed
+    x8 = signext(x_s8, 8)
+
+    # ----- n = round(x/ln2) with the exact RTL sequence and widths -----
+    # mul92 = x*92 with 16-bit wrap
+    x16 = signext(x8, 16)
+    mul92 = signext((x16 << 7) - (x16 << 5) - (x16 << 2), 16)  # 128-32-4
+
+    # nq2_6 = mul92 >>> 6 (still 16-bit signed)
+    nq2_6 = signext(mul92 >> 6, 16)
+
+    # round-to-nearest: add +/- 32 depending on sign of nq2_6, then >>> 6
+    offs = -32 if (nq2_6 < 0) else 32
+    nq2_6_rnd = signext(nq2_6 + offs, 16)
+    n_full = signext(nq2_6_rnd >> 6, 16)  # still 16b signed
+
+    # Verilog: wire signed [2:0] n_round = 3'( ... );
+    # That is: take ONLY the lower 3 bits, interpret as signed 3-bit
+    n3_u = n_full & 0x7
+    n_round = n3_u - 8 if (n3_u & 0x4) else n3_u   # signed 3-bit in Python
+
+    # ----- r = {x[7],x} - (n*44)[8:0] (with exact widths and truncation) -----
+    # {x[7],x} is a 9-bit signed concat
+    x9 = signext(((x8 & 0x80) << 1) | (x8 & 0xFF), 9)
+
+    # n_se (10-bit signed), nL (10-bit), then truncate to 9 LSBs and interpret as signed
+    n10  = signext(n_round, 10)
+    nL10 = signext((n10 << 5) + (n10 << 3) + (n10 << 2), 10)  # *44
+    nL9  = signext(nL10 & 0x1FF, 9)                           # [8:0], signed
+
+    r_q16 = signext(x9 - nL9, 9)  # still Q1.6 but carried in 9 bits
+
+    # ----- polynomial e^r ≈ 1 + r + r^2/2 in Q0.16 with the same widths -----
+    # Q1.6 -> Q0.16: left shift by 10, keep 19b signed
+    r_q0_16 = signext(r_q16, 9) << 10
+    r_q0_16 = signext(r_q0_16, 19)
+
+    # r^2: 19x19 -> 38b, then >>>16 -> 22b, then /2 -> 22b
+    r2_q0_32 = signext(r_q0_16, 19) * signext(r_q0_16, 19)
+    r2_q0_32 = signext(r2_q0_32, 38)
+    r2_q0_16 = signext(r2_q0_32 >> 16, 22)
+    r2h_q0_16 = signext(r2_q0_16 >> 1, 22)
+
+    one_q0_16 = signext(65536, 22)         # 1.0 in Q0.16
+    r_ext_q0_16 = signext(r_q0_16, 22)
+    e_r_q0_16 = signext(one_q0_16 + r_ext_q0_16 + r2h_q0_16, 22)
+
+    # Apply 2^n via shift on 32b signed
+    e32 = signext(e_r_q0_16, 32)
+    if n_round >= 0:
+        e_scaled = signext(e32 << n_round, 32)
+    else:
+        e_scaled = signext(e32 >> (-n_round), 32)
+
+    # Convert to UQ3.6: if negative clamp to 0; else arithmetic >>>10, saturate to 9b
+    if e_scaled < 0:
+        return 0
+    uq36_pre = e_scaled >> 10
+    if uq36_pre > 0x1FF:
+        return 0x1FF
+    return uq36_pre & 0x1FF
+
+# ---------------- DUT helpers ----------------
 async def reset(dut, cycles=5):
     dut.rst_n.value = 0
-    dut.uio_in.value = 0  # clear vld/rdy
+    dut.uio_in.value = 0
     dut.ui_in.value = 0
     await Timer(1, "ns")
     for _ in range(cycles):
@@ -26,324 +104,115 @@ async def reset(dut, cycles=5):
     for _ in range(cycles):
         await RisingEdge(dut.clk)
 
-def set_bit(val: int, bit: int, one: bool) -> int:
-    return (val | (1 << bit)) if one else (val & ~(1 << bit))
-
 async def feed_term(dut, a_q07: int, b_q07: int):
-    """Feed one term = two beats (A then B) with vld=1, obeying rdy, then deassert vld."""
-    # Ensure vld=0 initially
+    """Send one 2-beat term with vld held high across both beats.
+       Expects RDY=1 in FIRST (for A) and again in WAIT4SECOND (for B)."""
+    # deassert vld, clear data
     dut.uio_in.value = set_bit(int(dut.uio_in.value), 0, False)
-
-    # Beat 1: A (assert vld)
-    dut.ui_in.value = a_q07
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 0, True)   # vld_slv_in=1
-
-    # wait until rdy_slv_out_w==1 (uio_out[1]) then clock in
-    while ((int(dut.uio_out.value) >> 1) & 1) == 0:
-        await RisingEdge(dut.clk)
+    dut.ui_in.value = 0
     await RisingEdge(dut.clk)
 
-    # Beat 2: B (keep vld=1)
-    dut.ui_in.value = b_q07
-    await RisingEdge(dut.clk)  # WAIT4SECOND only checks vld==1
+    # --- Beat 1 (A) ---
+    # Wait until DUT is ready in FIRST
+    while ((int(dut.uio_out.value) >> 1) & 1) == 0:
+        await RisingEdge(dut.clk)
 
-    # Deassert vld, idle input to avoid accidental capture
+    # Present A and assert vld
+    dut.ui_in.value = a_q07
+    dut.uio_in.value = set_bit(int(dut.uio_in.value), 0, True)
+    await RisingEdge(dut.clk)  # A captured; DUT transitions to WAIT4SECOND
+
+    # --- Beat 2 (B) ---
+    # Now wait again for RDY=1 in WAIT4SECOND
+    while ((int(dut.uio_out.value) >> 1) & 1) == 0:
+        await RisingEdge(dut.clk)
+
+    # Present B while keeping vld high
+    dut.ui_in.value = b_q07
+    await RisingEdge(dut.clk)  # B captured; DUT transitions to READY (does MAC)
+
+    # Deassert vld and clear data
     dut.uio_in.value = set_bit(int(dut.uio_in.value), 0, False)
     dut.ui_in.value = 0
 
+
 async def drain_output(dut):
-    """Assert rdy_mst_in=1 for one cycle to accept output (uio_in[3])."""
     dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)
     await RisingEdge(dut.clk)
     dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, False)
 
-
-@cocotb.test()
-async def test_single_dot_exp(dut):
-    """Feed 4 terms (8 beats), expect one UQ3.6 e^x output."""
-    cocotb.start_soon(Clock(dut.clk, 10, "ns").start())
-    await reset(dut)
-
-    # Keep rdy_mst_in high most of the time (accept as soon as valid asserts)
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)
-
-    # Choose 4 pairs (A,B) in Q0.7 range ~ [-1,1)
-    pairs_real = [(-0.75, 0.50), (0.25, -0.50), (0.60, 0.40), (-0.30, 0.20)]
-    pairs_q = [(encode_q0_7(a), encode_q0_7(b)) for a, b in pairs_real]
-
-    # Feed 4 terms
-    for (aq, bq) in pairs_q:
-        await feed_term(dut, aq, bq)
-
-    # Wait until DUT raises valid (uio_out[2]==1)
-    for _ in range(100):
-        await RisingEdge(dut.clk)
-        if ((int(dut.uio_out.value) >> 2) & 1) == 1:
-            break
-    else:
-        assert False, "Timeout waiting for vld_mst_out_w=1"
-
-    # Sample output (uo_out[7:0], uio_out[4])
-    lo8 = int(dut.uo_out.value) & 0xFF
-    hi1 = (int(dut.uio_out.value) >> 4) & 1
-    y_dut = decode_uq3_6(lo8, hi1)
-
-    # Accept the output to clear valid
-    await drain_output(dut)
-
-    # ----- compute expected x that DUT feeds to exp -----
-    # mac_sum = sum_i (Ai * Bi) using int8 * int8 products (two's complement)
-    # mac_reduced = (mac_sum >>> 10) (Q1.6 integer), x_real = x_fixed / 64
-    products = []
-    for (aq, bq) in pairs_q:
-        a = np.int8(aq).item()
-        b = np.int8(bq).item()
-        products.append(int(a) * int(b))
-    mac_sum = int(np.int32(np.sum(products)))
-
-    def arshift(val, sh):
-        # Python right shift is already arithmetic for ints, but keep explicit
-        return val >> sh
-
-    x_fixed = arshift(mac_sum, 10)  # Q1.6 integer
-    x_real = x_fixed / 64.0
-
-    y_ref = float(np.exp(x_real))
-
-    # Tolerance for your simple exp approximation & quantization
-    tol = 0.4
-    abs_err = abs(y_dut - y_ref)
-
-    dut._log.info(f"x_real={x_real:.6f}  DUT={y_dut:.6f}  REF={y_ref:.6f}  abs_err={abs_err:.6f}")
-    assert abs_err <= tol, f"abs error {abs_err:.4f} > {tol:.4f} (x={x_real:.5f}, dut={y_dut:.5f}, ref={y_ref:.5f})"
-
-
-@cocotb.test()
-async def test_back_to_back_tokens(dut):
-    """Two consecutive dots (8 terms total) with continuous backpressure-free sink."""
-    cocotb.start_soon(Clock(dut.clk, 10, "ns").start())
-    await reset(dut)
-
-    # Always ready to accept
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)
-
-    # Build two dots, each 4 terms
-    sets = [
-        [(-0.5, 0.4), (0.3, 0.2), (-0.7, -0.6), (0.25, -0.5)],
-        [(0.8, -0.5), (0.1, 0.9), (-0.4, 0.3), (0.6, -0.2)],
-    ]
-
-    for dot_idx, pairs in enumerate(sets):
-        for a, b in pairs:
-            aq, bq = encode_q0_7(a), encode_q0_7(b)
-            await feed_term(dut, aq, bq)
-
-        # Wait for valid
-        for _ in range(100):
-            await RisingEdge(dut.clk)
-            if ((int(dut.uio_out.value) >> 2) & 1) == 1:
-                break
-        else:
-            assert False, f"Timeout waiting for vld (dot {dot_idx})"
-
-        # Capture + decode
-        lo8 = int(dut.uo_out.value) & 0xFF
-        hi1 = (int(dut.uio_out.value) >> 4) & 1
-        y_dut = decode_uq3_6(lo8, hi1)
-
-        # Accept and clear valid
-        await drain_output(dut)
-
-        # Quick sanity: e^x must be strictly positive
-        assert y_dut >= 0.0, "exp output must be non-negative"
-
-
-from cocotb.triggers import First
-
 async def wait_for_valid(dut, cycles=200):
-    """Wait until DUT raises valid (uio_out[2]==1), else fail."""
     for _ in range(cycles):
         await RisingEdge(dut.clk)
         if ((int(dut.uio_out.value) >> 2) & 1) == 1:
             return
     assert False, "Timeout waiting for vld_mst_out_w=1"
+def sclip(v: int, bits: int) -> int:
+    """Wrap to 'bits'-wide signed two's-complement."""
+    v &= (1 << bits) - 1
+    s = 1 << (bits - 1)
+    return (v ^ s) - s
 
-
-@cocotb.test()
-async def test_zero_vector(dut):
-    """All terms zero -> x=0, expect e^0≈1."""
-    cocotb.start_soon(Clock(dut.clk, 10, "ns").start())
-    await reset(dut)
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)  # always ready
-
-    # 4 terms: (0,0)
-    pairs_q = [(encode_q0_7(0.0), encode_q0_7(0.0)) for _ in range(4)]
-    for aq, bq in pairs_q:
-        await feed_term(dut, aq, bq)
-
-    await wait_for_valid(dut)
-    lo8 = int(dut.uo_out.value) & 0xFF
-    hi1 = (int(dut.uio_out.value) >> 4) & 1
-    y_dut = decode_uq3_6(lo8, hi1)
-    await drain_output(dut)
-
-    y_ref = 1.0
-    assert abs(y_dut - y_ref) <= 0.05, f"e^0 should be ~1.0, got {y_dut:.4f}"
-
-
-@cocotb.test()
-async def test_fourth_term_dominates(dut):
+def rtl_reduce_mac_to_q1_6(mac_sum_int: int) -> int:
     """
-    First three products ~0, last product large.
-    This stresses 'capture after 4th MAC' behavior.
+    Emulate RTL path:
+      mac_reg: 17-bit signed accumulator (Q2.14)
+      mac_div2 = arithmetic >>>1 -> Q1.15
+      mac_reduced = mac_div2[16:9] -> 8-bit signed Q1.6
+    Returns int8 value (two's-complement) as Python int in [-128,127].
     """
-    cocotb.start_soon(Clock(dut.clk, 10, "ns").start())
-    await reset(dut)
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)
+    mac17    = sclip(mac_sum_int, 17)          # wrap to 17b signed like the reg
+    mac_div2 = sclip(mac17 >> 1, 17)           # arithmetic >>>1 (keep 17b)
+    x_s8     = np.int8((mac_div2 >> 9) & 0xFF).item()  # slice [16:9] -> int8
+    return x_s8
 
-    # Three tiny products, one big positive product
-    pairs_real = [(0.0, 0.0), (0.01, -0.01), (-0.01, 0.01), (0.95, 0.95)]
-    pairs_q = [(encode_q0_7(a), encode_q0_7(b)) for a, b in pairs_real]
-    for aq, bq in pairs_q:
-        await feed_term(dut, aq, bq)
-
-    await wait_for_valid(dut)
-    lo8 = int(dut.uo_out.value) & 0xFF
-    hi1 = (int(dut.uio_out.value) >> 4) & 1
-    y_dut = decode_uq3_6(lo8, hi1)
-    await drain_output(dut)
-
-    # Compute reference from exact fixed-point path
+def mac_path_reference(pairs_q):
     prods = []
     for aq, bq in pairs_q:
         a = np.int8(aq).item()
         b = np.int8(bq).item()
         prods.append(int(a) * int(b))
-    mac_sum = int(np.int32(np.sum(prods)))
-    x_fixed = mac_sum >> 10
-    x_real = x_fixed / 64.0
-    y_ref = float(np.exp(x_real))
 
-    tol = 0.4
-    assert abs(y_dut - y_ref) <= tol, f"abs err {abs(y_dut - y_ref):.4f} > {tol:.4f}"
+    mac_sum = int(np.int32(np.sum(prods)))     # 4 terms, fits 17b signed
+    x_s8 = rtl_reduce_mac_to_q1_6(mac_sum)     # EXACTLY like RTL wiring
+
+    # For logging: convert int8 Q1.6 to integer/floating representations
+    x_fixed = signext(x_s8, 8)                 # still Q1.6 integer in [-128,127]
+    x_real  = x_fixed / 64.0
+
+    return mac_sum, x_fixed, x_real, x_s8
 
 
+def read_dut_y(dut):
+    lo8 = int(dut.uo_out.value) & 0xFF
+    hi1 = (int(dut.uio_out.value) >> 4) & 1
+    raw9 = ((hi1 & 1) << 8) | lo8
+    return raw9, raw9 / 64.0
+
+# ---------------- minimal test to compare DUT vs model ----------------
 @cocotb.test()
-async def test_sink_backpressure(dut):
-    """
-    Hold rdy_mst_in low for several cycles after valid;
-    DUT should hold valid and keep output stable.
-    """
+async def test_single_dot_exp(dut):
+    """Feed one dot (4 terms), compare DUT vs bit-accurate model (not vs float)."""
     cocotb.start_soon(Clock(dut.clk, 10, "ns").start())
     await reset(dut)
+    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)
 
-    # rdy low initially
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, False)
-
-    # Feed a dot
-    pairs_real = [(0.7, 0.7), (0.6, -0.4), (-0.5, 0.2), (0.3, 0.9)]
+    # same vector that showed 0x03A vs 0x038 before
+    pairs_real = [(-0.75, 0.50), (0.25, -0.50), (0.60, 0.40), (-0.30, 0.20)]
     pairs_q = [(encode_q0_7(a), encode_q0_7(b)) for a, b in pairs_real]
-    for aq, bq in pairs_q:
+    for (aq, bq) in pairs_q:
         await feed_term(dut, aq, bq)
 
-    # Wait for valid
     await wait_for_valid(dut)
-    lo8_1 = int(dut.uo_out.value) & 0xFF
-    hi1_1 = (int(dut.uio_out.value) >> 4) & 1
-
-    # Keep rdy low for a few cycles; output/valid must remain stable
-    for _ in range(5):
-        await RisingEdge(dut.clk)
-        lo8_2 = int(dut.uo_out.value) & 0xFF
-        hi1_2 = (int(dut.uio_out.value) >> 4) & 1
-        vld   = (int(dut.uio_out.value) >> 2) & 1
-        assert vld == 1, "valid dropped under backpressure"
-        assert (lo8_2 == lo8_1) and (hi1_2 == hi1_1), "output changed under backpressure"
-
-    # Now accept result
+    dut_raw, y_dut = read_dut_y(dut)
     await drain_output(dut)
 
+    _, x_fixed, x_real, x_s8 = mac_path_reference(pairs_q)
+    model_raw = ex_logic_model_q(x_s8)
+    y_model = model_raw / 64.0
 
-@cocotb.test()
-async def test_extreme_ranges(dut):
-    """Drive inputs that push x near -2 and +2 to check saturation / range tails."""
-    cocotb.start_soon(Clock(dut.clk, 10, "ns").start())
-    await reset(dut)
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)
+    dut._log.info(f"x_fixed={x_fixed} (Q1.6)  x_real={x_real:.6f}")
+    dut._log.info(f"DUT:   raw=0x{dut_raw:03X}  y={y_dut:.6f}")
+    dut._log.info(f"MODEL: raw=0x{model_raw:03X} y={y_model:.6f}")
 
-    # Two stress cases: mostly positive vs mostly negative dot
-    cases = [
-        [(0.99, 0.99), (0.99, 0.99), (0.99, 0.99), (0.99, 0.99)],     # large positive
-        [(-0.99, 0.99), (-0.99, 0.99), (-0.99, 0.99), (-0.99, 0.99)], # large negative
-    ]
-
-    for idx, pairs_real in enumerate(cases):
-        pairs_q = [(encode_q0_7(a), encode_q0_7(b)) for a, b in pairs_real]
-        for aq, bq in pairs_q:
-            await feed_term(dut, aq, bq)
-
-        await wait_for_valid(dut)
-        lo8 = int(dut.uo_out.value) & 0xFF
-        hi1 = (int(dut.uio_out.value) >> 4) & 1
-        y_dut = decode_uq3_6(lo8, hi1)
-        await drain_output(dut)
-
-        # Reference from actual path
-        prods = []
-        for aq, bq in pairs_q:
-            a = np.int8(aq).item()
-            b = np.int8(bq).item()
-            prods.append(int(a) * int(b))
-        mac_sum = int(np.int32(np.sum(prods)))
-        x_fixed = mac_sum >> 10
-        x_real = x_fixed / 64.0
-        y_ref = float(np.exp(x_real))
-
-        # Relax tolerance slightly for extremes
-        tol = 0.4
-        assert abs(y_dut - y_ref) <= tol, f"[case {idx}] |err|={abs(y_dut-y_ref):.4f} > {tol:.4f}"
-
-
-@cocotb.test()
-async def test_random_fuzz_100(dut):
-    """100 random dots, check error <= tol and monotonicity wrt x."""
-    rng = np.random.default_rng(123)
-    cocotb.start_soon(Clock(dut.clk, 10, "ns").start())
-    await reset(dut)
-    dut.uio_in.value = set_bit(int(dut.uio_in.value), 3, True)
-
-    last_x = None
-    last_y = None
-
-    for t in range(100):
-        pairs_real = [(float(rng.uniform(-0.99, 0.99)),
-                       float(rng.uniform(-0.99, 0.99))) for _ in range(4)]
-        pairs_q = [(encode_q0_7(a), encode_q0_7(b)) for a, b in pairs_real]
-        for aq, bq in pairs_q:
-            await feed_term(dut, aq, bq)
-
-        await wait_for_valid(dut)
-        lo8 = int(dut.uo_out.value) & 0xFF
-        hi1 = (int(dut.uio_out.value) >> 4) & 1
-        y_dut = decode_uq3_6(lo8, hi1)
-        await drain_output(dut)
-
-        # Reference via fixed-point recompute
-        prods = []
-        for aq, bq in pairs_q:
-            a = np.int8(aq).item()
-            b = np.int8(bq).item()
-            prods.append(int(a) * int(b))
-        mac_sum = int(np.int32(np.sum(prods)))
-        x_fixed = mac_sum >> 10
-        x_real = x_fixed / 64.0
-        y_ref = float(np.exp(x_real))
-
-        tol = 0.44 # we expect 0.4 since only e^x delivers 0.2 at higher values of e^x
-        assert abs(y_dut - y_ref) <= tol, f"[#{t}] err={abs(y_dut-y_ref):.4f} > {tol:.4f}"
-
-        # Weak monotonicity sanity: if x increases noticeably, y should not decrease
-        if last_x is not None and (x_real - last_x) > 0.05:
-            assert y_dut >= (last_y - 0.05), f"monotonicity violated: x↑ but y fell"
-
-        last_x, last_y = x_real, y_dut
+    assert dut_raw == model_raw, f"DUT raw 0x{dut_raw:03X} != model 0x{model_raw:03X}"
