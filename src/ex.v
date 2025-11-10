@@ -16,10 +16,11 @@ module ex (
     // Take 3 LSBs of the integer after rounding (range about −3..+3)
     wire signed [2:0]  n_round   = 3'(nq2_6_rnd >>> 6);
 
-    // ---- r = x - n*ln2 in Q1.6; ln2 ≈ 44/64 = 32+8+4 ----
-    wire signed [9:0]  n_se  = {{7{n_round[2]}}, n_round};                 // sign-extend n to 10b
-    wire signed [9:0]  nL    = (n_se <<< 5) + (n_se <<< 3) + (n_se <<< 2); // n*44 in Q1.6 units
-    wire signed [8:0]  r_q16 = $signed({x[7], x}) - $signed(nL[8:0]);      // r in Q1.6 (|r| ≲ 0.35)
+   // r = x - n*ln2
+    wire signed [9:0]  n_se  = {{7{n_round[2]}}, n_round};
+    wire signed [9:0]  nL    = (n_se <<< 5) + (n_se <<< 3) + (n_se <<< 2); // n*44, Q1.6 units
+    wire signed [8:0]  r_q16 = $signed({x[7], x}) - $signed(nL[8:0]);      // <-- truncates to 9b
+
 
     // ==== Polynomial in Q0.16: e^r ≈ 1 + r + r^2/2 ====
     // Convert r from Q1.6 -> Q0.16 by left shift of (16-6)=10
