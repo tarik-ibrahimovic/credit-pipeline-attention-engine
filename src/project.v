@@ -59,7 +59,7 @@ module tt_um_attention_top (
 
     wire signed [16:0] qv_mult = input_reg * $signed(qv_slv_in);
 
-    assign rdy_slv_out_w = ((input_reg_state == FIRST) || (input_reg_state == WAIT4SECOND)) ? 1'b1 : 1'b0;
+    assign rdy_slv_out_w = 1'b1;
 
     reg done_mac;
     always @(posedge clk) begin
